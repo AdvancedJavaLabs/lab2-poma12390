@@ -1,29 +1,44 @@
 plugins {
-    kotlin("jvm") version "1.9.20"
-    application
+    java
 }
 
-group = "org.itmo"
-version = "1.0-SNAPSHOT"
+allprojects {
+    group = "itmo.maga.javaparallel.lab2"
+    version = "1.0-SNAPSHOT"
 
-repositories {
-    mavenCentral()
+    repositories {
+        mavenCentral()
+    }
 }
 
-dependencies {
-    implementation("javax.jms:jms-api:2.0.1")
-    implementation("org.apache.activemq:activemq-broker:6.1.1")
-    testImplementation(kotlin("test"))
-}
+subprojects {
+    apply(plugin = "java")
 
-tasks.test {
-    useJUnitPlatform()
-}
+    java {
+        toolchain {
+            languageVersion.set(JavaLanguageVersion.of(17))
+        }
+    }
 
-kotlin {
-    jvmToolchain(8)
-}
+    tasks.withType<JavaCompile>().configureEach {
+        options.encoding = "UTF-8"
+    }
 
-application {
-    mainClass.set("MainKt")
+    tasks.withType<Test>().configureEach {
+        useJUnitPlatform()
+    }
+
+    dependencies {
+        // Логирование
+        implementation("org.slf4j:slf4j-api:2.0.13")
+        runtimeOnly("ch.qos.logback:logback-classic:1.5.6")
+
+        // JSON-сериализация (для сообщений в очередях)
+        implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
+        implementation("com.fasterxml.jackson.module:jackson-module-parameter-names:2.17.2")
+        implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.17.2")
+
+        // Тесты
+        testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")
+    }
 }
