@@ -11,20 +11,61 @@ public final class ResultMessage {
     private int wordCount;
     private List<WordFrequency> topWords;
 
+    private int sentimentScore;
+    private int positiveWordCount;
+    private int negativeWordCount;
+
+    private String transformedSectionText;
+
     public ResultMessage() {
         this.topWords = new ArrayList<>();
     }
 
-    public ResultMessage(String jobId,
-                         int sectionIndex,
-                         int totalSections,
-                         int wordCount,
-                         List<WordFrequency> topWords) {
+    public ResultMessage(
+            String jobId,
+            int sectionIndex,
+            int totalSections,
+            int wordCount,
+            List<WordFrequency> topWords
+    ) {
+        this(jobId, sectionIndex, totalSections, wordCount, topWords,
+                0, 0, 0, null);
+    }
+
+    public ResultMessage(
+            String jobId,
+            int sectionIndex,
+            int totalSections,
+            int wordCount,
+            List<WordFrequency> topWords,
+            int sentimentScore,
+            int positiveWordCount,
+            int negativeWordCount
+    ) {
+        this(jobId, sectionIndex, totalSections, wordCount, topWords,
+                sentimentScore, positiveWordCount, negativeWordCount, null);
+    }
+
+    public ResultMessage(
+            String jobId,
+            int sectionIndex,
+            int totalSections,
+            int wordCount,
+            List<WordFrequency> topWords,
+            int sentimentScore,
+            int positiveWordCount,
+            int negativeWordCount,
+            String transformedSectionText
+    ) {
         this.jobId = jobId;
         this.sectionIndex = sectionIndex;
         this.totalSections = totalSections;
         this.wordCount = wordCount;
-        this.topWords = topWords != null ? topWords : new ArrayList<>();
+        this.topWords = topWords != null ? new ArrayList<>(topWords) : new ArrayList<>();
+        this.sentimentScore = sentimentScore;
+        this.positiveWordCount = positiveWordCount;
+        this.negativeWordCount = negativeWordCount;
+        this.transformedSectionText = transformedSectionText;
     }
 
     public String getJobId() {
@@ -64,7 +105,39 @@ public final class ResultMessage {
     }
 
     public void setTopWords(List<WordFrequency> topWords) {
-        this.topWords = topWords != null ? topWords : new ArrayList<>();
+        this.topWords = topWords != null ? new ArrayList<>(topWords) : new ArrayList<>();
+    }
+
+    public int getSentimentScore() {
+        return sentimentScore;
+    }
+
+    public void setSentimentScore(int sentimentScore) {
+        this.sentimentScore = sentimentScore;
+    }
+
+    public int getPositiveWordCount() {
+        return positiveWordCount;
+    }
+
+    public void setPositiveWordCount(int positiveWordCount) {
+        this.positiveWordCount = positiveWordCount;
+    }
+
+    public int getNegativeWordCount() {
+        return negativeWordCount;
+    }
+
+    public void setNegativeWordCount(int negativeWordCount) {
+        this.negativeWordCount = negativeWordCount;
+    }
+
+    public String getTransformedSectionText() {
+        return transformedSectionText;
+    }
+
+    public void setTransformedSectionText(String transformedSectionText) {
+        this.transformedSectionText = transformedSectionText;
     }
 
     @Override
@@ -74,6 +147,11 @@ public final class ResultMessage {
                 ", sectionIndex=" + sectionIndex +
                 ", totalSections=" + totalSections +
                 ", wordCount=" + wordCount +
+                ", sentimentScore=" + sentimentScore +
+                ", positiveWordCount=" + positiveWordCount +
+                ", negativeWordCount=" + negativeWordCount +
+                ", transformedSectionTextLength=" +
+                (transformedSectionText != null ? transformedSectionText.length() : 0) +
                 ", topWords=" + topWords +
                 '}';
     }

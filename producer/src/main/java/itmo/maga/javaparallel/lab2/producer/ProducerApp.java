@@ -45,11 +45,6 @@ public class ProducerApp {
 
             List<String> sections = splitIntoParagraphSections(corpusText);
 
-            if (sections.isEmpty()) {
-                System.err.println("No non-empty sections found in " + sourceDescription);
-                System.exit(1);
-            }
-
             String jobId = UUID.randomUUID().toString();
             int totalSections = sections.size();
 
@@ -61,18 +56,11 @@ public class ProducerApp {
             System.out.println("Job " + jobId + " completed. All sections sent to queue '" + TASK_QUEUE_NAME + "'.");
         } catch (IOException e) {
             System.err.println("Failed to read corpus");
-            e.printStackTrace(System.err);
-            System.exit(1);
         } catch (Exception e) {
             System.err.println("Unexpected error in ProducerApp");
-            e.printStackTrace(System.err);
-            System.exit(1);
         }
     }
 
-    /**
-     * Читает весь текстовый корпус из файла в строку UTF-8.
-     */
     private static String readCorpusFromFile(String inputFilePath) throws IOException {
         Path path = Paths.get(inputFilePath);
         if (!Files.exists(path)) {
@@ -82,10 +70,6 @@ public class ProducerApp {
         return new String(bytes, StandardCharsets.UTF_8);
     }
 
-    /**
-     * Читает текстовый файл из ресурсов (classpath) в строку UTF-8.
-     * Ожидает, что файл лежит в src/main/resources и попадает в classpath как есть.
-     */
     private static String readCorpusFromResource(String resourceName) throws IOException {
         ClassLoader classLoader = ProducerApp.class.getClassLoader();
         try (InputStream in = classLoader.getResourceAsStream(resourceName)) {
@@ -97,10 +81,6 @@ public class ProducerApp {
         }
     }
 
-    /**
-     * Разбивает текст на секции по параграфам.
-     * Параграфом считаем блок текста, отделённый хотя бы одной пустой строкой.
-     */
     private static List<String> splitIntoParagraphSections(String text) {
         String normalized = text.replace("\r\n", "\n").replace('\r', '\n');
 
@@ -118,9 +98,6 @@ public class ProducerApp {
         return sections;
     }
 
-    /**
-     * Отправляет каждую секцию как отдельное сообщение в очередь RabbitMQ.
-     */
     private static void sendTasksToRabbit(String jobId, List<String> sections, int totalSections)
             throws IOException, TimeoutException {
 

@@ -5,35 +5,23 @@ import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.DeliverCallback;
-import itmo.maga.javaparallel.lab2.common.ResultMessage;
 import itmo.maga.javaparallel.lab2.common.FinalJobResult;
+import itmo.maga.javaparallel.lab2.common.ResultMessage;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
-/**
- * Aggregator / Collector.
- *
- * Слушает очередь с частичными результатами от воркеров (ResultMessage),
- * агрегирует их по jobId и выводит финальный summary,
- * когда пришли все секции для задания.
- *
- * Сейчас агрегирует:
- *  - суммарный wordCount по всем секциям;
- *  - глобальный топ-N слов (merge top списков секций);
- *  - per-section статистику (для отладки);
- *  - отправляет финальный агрегированный результат (FinalJobResult)
- *    в очередь text_final_results для ResultSinkApp.
- */
 public class AggregatorApp {
 
     private static final String RESULT_QUEUE_NAME = "text_results";
@@ -44,181 +32,124 @@ public class AggregatorApp {
     private static final String RABBIT_USERNAME = "labuser";
     private static final String RABBIT_PASSWORD = "labpassword";
 
-    // Сколько слов показывать в итоговом топе
-    private static final int GLOBAL_TOP_N = 20;
-
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    /**
-     * Состояние активных job-ов по jobId.
-     */
     private static final Map<String, JobAggregation> JOBS = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
-        try {
-            runAggregator();
-        } catch (Exception e) {
-            System.err.println("Aggregator failed with unexpected error");
-            e.printStackTrace(System.err);
-            System.exit(1);
-        }
-    }
-
-    private static void runAggregator() throws IOException, TimeoutException {
         ConnectionFactory factory = new ConnectionFactory();
         factory.setHost(RABBIT_HOST);
         factory.setPort(RABBIT_PORT);
         factory.setUsername(RABBIT_USERNAME);
         factory.setPassword(RABBIT_PASSWORD);
 
-        Connection connection = factory.newConnection();
-        Channel channel = connection.createChannel();
-
-        channel.queueDeclare(RESULT_QUEUE_NAME, true, false, false, null);
-
-        channel.queueDeclare(FINAL_RESULT_QUEUE_NAME, true, false, false, null);
-
-        channel.basicQos(1);
-
-        OBJECT_MAPPER.findAndRegisterModules();
-
-        String aggregatorId = buildAggregatorId();
-        System.out.println("Aggregator " + aggregatorId +
-                " started. Waiting for messages from '" + RESULT_QUEUE_NAME + "'...");
-
-        DeliverCallback deliverCallback = (consumerTag, delivery) -> {
-            long deliveryTag = delivery.getEnvelope().getDeliveryTag();
-            try {
-                byte[] body = delivery.getBody();
-                ResultMessage result = OBJECT_MAPPER.readValue(body, ResultMessage.class);
-
-                if (result == null) {
-                    System.err.println("Aggregator received null result, skipping");
-                    channel.basicAck(deliveryTag, false);
-                    return;
-                }
-
-                handleResult(result, channel);
-
-                channel.basicAck(deliveryTag, false);
-            } catch (Exception ex) {
-                System.err.println("Aggregator failed to process message, will requeue");
-                ex.printStackTrace(System.err);
-                channel.basicNack(deliveryTag, false, true);
-            }
-        };
-
-        boolean autoAck = false;
-        channel.basicConsume(RESULT_QUEUE_NAME, autoAck, deliverCallback, consumerTag -> {
-            System.out.println("Aggregator " + aggregatorId + " cancelled consumer: " + consumerTag);
-        });
-    }
-
-    /**
-     * Обработка одного ResultMessage: обновление агрегатов по jobId.
-     */
-    private static void handleResult(ResultMessage result, Channel channel) {
-        String jobId = result.getJobId();
-        int sectionIndex = result.getSectionIndex();
-        int totalSections = result.getTotalSections();
-
-        if (jobId == null) {
-            System.err.println("Aggregator: received message without jobId, skipping");
-            return;
-        }
-
-        JobAggregation job = JOBS.computeIfAbsent(jobId, id -> new JobAggregation(id, totalSections));
-
-        synchronized (job) {
-            if (job.getTotalSections() != totalSections) {
-                System.err.println("Aggregator: inconsistent totalSections for job " + jobId +
-                        ": existing=" + job.getTotalSections() +
-                        ", new=" + totalSections);
-            }
-
-            if (job.hasSection(sectionIndex)) {
-                System.out.println("Aggregator: duplicate section " + sectionIndex +
-                        " for job " + jobId + ", ignoring");
-                return;
-            }
-
-            job.addSection(result);
-
-            System.out.println("Aggregator: received section " + sectionIndex +
-                    " of " + job.getTotalSections() +
-                    " for job " + jobId +
-                    ", wordCount = " + result.getWordCount());
-
-            if (job.isComplete()) {
-                finalizeJob(job, channel);
-                JOBS.remove(jobId);
-            }
-        }
-    }
-
-    /**
-     * Финализация job-а: печать итоговой статистики и отправка FinalJobResult в очередь.
-     */
-    private static void finalizeJob(JobAggregation job, Channel channel) {
-        List<ResultMessage.WordFrequency> globalTop =
-                buildTopN(job.getGlobalWordFrequencies(), GLOBAL_TOP_N);
-
-        System.out.println();
-        System.out.println("======== Aggregated result for job " + job.getJobId() + " ========");
-        System.out.println("Sections:       " + job.getTotalSections());
-        System.out.println("Total wordCount " + job.getTotalWordCount());
-        System.out.println();
-        System.out.println("Top " + GLOBAL_TOP_N + " words (merged from all sections):");
-
-        for (ResultMessage.WordFrequency wf : globalTop) {
-            System.out.printf("  %-20s -> %d%n", wf.getWord(), wf.getCount());
-        }
-
-        System.out.println();
-        System.out.println("Per-section summary:");
-        List<ResultMessage> sections = new ArrayList<>(job.getSections().values());
-        Collections.sort(sections, Comparator.comparingInt(ResultMessage::getSectionIndex));
-        for (ResultMessage section : sections) {
-            System.out.println("  Section " + section.getSectionIndex() +
-                    ": wordCount=" + section.getWordCount());
-        }
-
-        System.out.println("======== End of aggregated result for job " + job.getJobId() + " ========");
-        System.out.println();
-
         try {
-            FinalJobResult finalResult = new FinalJobResult();
-            finalResult.setJobId(job.getJobId());
-            finalResult.setTotalSections(job.getTotalSections());
-            finalResult.setTotalWordCount(job.getTotalWordCount());
-            finalResult.setGlobalTopWords(globalTop);
-            finalResult.setSections(sections);
+            Connection connection = factory.newConnection();
+            Channel channel = connection.createChannel();
 
-            byte[] body = OBJECT_MAPPER.writeValueAsBytes(finalResult);
+            channel.queueDeclare(RESULT_QUEUE_NAME, true, false, false, null);
+            channel.queueDeclare(FINAL_RESULT_QUEUE_NAME, true, false, false, null);
+            channel.basicQos(1);
 
-            channel.basicPublish("", FINAL_RESULT_QUEUE_NAME, null, body);
+            String aggregatorId = buildAggregatorId();
 
-            System.out.println("Aggregator: published FinalJobResult for job " +
-                    job.getJobId() + " to queue '" + FINAL_RESULT_QUEUE_NAME + "'");
-        } catch (IOException e) {
-            System.err.println("Aggregator: failed to publish FinalJobResult for job " + job.getJobId());
+            System.out.println(
+                    "Aggregator " + aggregatorId +
+                            " started. Waiting for messages from '" + RESULT_QUEUE_NAME + "'..."
+            );
+
+            DeliverCallback deliverCallback = (consumerTag, delivery) -> {
+                long deliveryTag = delivery.getEnvelope().getDeliveryTag();
+                try {
+                    byte[] body = delivery.getBody();
+                    ResultMessage result = OBJECT_MAPPER.readValue(body, ResultMessage.class);
+
+                    if (result == null) {
+                        System.err.println("Aggregator: received null ResultMessage, skipping");
+                        channel.basicAck(deliveryTag, false);
+                        return;
+                    }
+
+                    String jobId = result.getJobId();
+                    if (jobId == null || jobId.isEmpty()) {
+                        System.err.println("Aggregator: received ResultMessage with empty jobId, skipping");
+                        channel.basicAck(deliveryTag, false);
+                        return;
+                    }
+
+                    int totalSections = result.getTotalSections();
+                    if (totalSections <= 0) {
+                        System.err.println(
+                                "Aggregator: received ResultMessage with non-positive totalSections for job " + jobId
+                        );
+                        channel.basicAck(deliveryTag, false);
+                        return;
+                    }
+
+                    JobAggregation job = JOBS.computeIfAbsent(
+                            jobId,
+                            id -> new JobAggregation(id, totalSections)
+                    );
+
+                    job.addSectionResult(result);
+
+                    if (job.isComplete()) {
+                        FinalJobResult finalResult = buildFinalResult(job);
+
+                        byte[] finalBody = OBJECT_MAPPER.writeValueAsBytes(finalResult);
+
+                        channel.basicPublish(
+                                "",
+                                FINAL_RESULT_QUEUE_NAME,
+                                null,
+                                finalBody
+                        );
+
+                        System.out.println(
+                                "Aggregator: job " + jobId +
+                                        " is complete. Final wordCount = " + finalResult.getTotalWordCount() +
+                                        ", sections = " + finalResult.getTotalSections()
+                        );
+
+                        JOBS.remove(jobId);
+                    }
+
+                    channel.basicAck(deliveryTag, false);
+                } catch (Exception ex) {
+                    ex.printStackTrace(System.err);
+                    channel.basicNack(deliveryTag, false, true);
+                }
+            };
+
+            boolean autoAck = false;
+            channel.basicConsume(
+                    RESULT_QUEUE_NAME,
+                    autoAck,
+                    deliverCallback,
+                    consumerTag -> System.out.println(
+                            "Aggregator " + aggregatorId + " cancelled consumer: " + consumerTag
+                    )
+            );
+        } catch (IOException | TimeoutException e) {
+            System.err.println("Aggregator failed with unexpected error");
             e.printStackTrace(System.err);
         }
     }
 
-    /**
-     * Построение глобального топ-N из карты частот.
-     */
-    private static List<ResultMessage.WordFrequency> buildTopN(Map<String, Integer> freqMap, int limit) {
-        if (freqMap.isEmpty()) {
-            return Collections.emptyList();
-        }
+    private static FinalJobResult buildFinalResult(JobAggregation job) {
+        int totalSections = job.getTotalSections();
+        int totalWordCount = job.getTotalWordCount();
 
-        return freqMap.entrySet()
+        Map<String, Integer> globalFreq = job.getGlobalWordFrequencies();
+
+        List<ResultMessage.WordFrequency> globalTopWords = globalFreq.entrySet()
                 .stream()
                 .sorted(new Comparator<Map.Entry<String, Integer>>() {
                     @Override
-                    public int compare(Map.Entry<String, Integer> o1, Map.Entry<String, Integer> o2) {
+                    public int compare(
+                            Map.Entry<String, Integer> o1,
+                            Map.Entry<String, Integer> o2
+                    ) {
                         int c = Integer.compare(o2.getValue(), o1.getValue());
                         if (c != 0) {
                             return c;
@@ -226,21 +157,101 @@ public class AggregatorApp {
                         return o1.getKey().compareTo(o2.getKey());
                     }
                 })
-                .limit(limit)
+                .limit(10)
                 .map(entry -> new ResultMessage.WordFrequency(entry.getKey(), entry.getValue()))
                 .collect(Collectors.toList());
+
+        List<ResultMessage> orderedSections = new ArrayList<>(job.getSections().values());
+        Collections.sort(orderedSections, new Comparator<ResultMessage>() {
+            @Override
+            public int compare(ResultMessage o1, ResultMessage o2) {
+                return Integer.compare(o1.getSectionIndex(), o2.getSectionIndex());
+            }
+        });
+
+        String modifiedText = buildModifiedText(orderedSections);
+        List<String> sortedSentences = buildSortedSentences(modifiedText);
+
+        double averageSentiment = 0.0;
+        if (totalSections > 0) {
+            averageSentiment = (double) job.getTotalSentimentScore() / (double) totalSections;
+        }
+
+        FinalJobResult finalResult = new FinalJobResult();
+        finalResult.setJobId(job.getJobId());
+        finalResult.setTotalSections(totalSections);
+        finalResult.setTotalWordCount(totalWordCount);
+        finalResult.setGlobalTopWords(globalTopWords);
+        finalResult.setSections(orderedSections);
+        finalResult.setTotalSentimentScore(job.getTotalSentimentScore());
+        finalResult.setTotalPositiveWordCount(job.getTotalPositiveWordCount());
+        finalResult.setTotalNegativeWordCount(job.getTotalNegativeWordCount());
+        finalResult.setAverageSentimentPerSection(averageSentiment);
+        finalResult.setModifiedText(modifiedText);
+        finalResult.setSortedSentences(sortedSentences);
+
+        return finalResult;
+    }
+
+    private static String buildModifiedText(List<ResultMessage> orderedSections) {
+        if (orderedSections == null || orderedSections.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < orderedSections.size(); i++) {
+            ResultMessage section = orderedSections.get(i);
+            String sectionText = section.getTransformedSectionText();
+            if (sectionText == null) {
+                sectionText = "";
+            }
+            sb.append(sectionText);
+            if (i < orderedSections.size() - 1) {
+                sb.append(System.lineSeparator()).append(System.lineSeparator());
+            }
+        }
+        return sb.toString();
+    }
+
+    private static List<String> buildSortedSentences(String text) {
+        List<String> sentences = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return sentences;
+        }
+
+        String normalized = text.replace("\r\n", " ").replace('\n', ' ');
+        String[] rawSentences = normalized.split("(?<=[.!?])\\s+");
+        for (String raw : rawSentences) {
+            if (raw == null) {
+                continue;
+            }
+            String trimmed = raw.trim();
+            if (!trimmed.isEmpty()) {
+                sentences.add(trimmed);
+            }
+        }
+
+        sentences.sort(new Comparator<String>() {
+            @Override
+            public int compare(String s1, String s2) {
+                int c = Integer.compare(s1.length(), s2.length());
+                if (c != 0) {
+                    return c;
+                }
+                return s1.compareTo(s2);
+            }
+        });
+
+        return sentences;
     }
 
     private static String buildAggregatorId() {
         String threadPart = Thread.currentThread().getName();
-        String randomPart = java.util.UUID.randomUUID().toString().substring(0, 8);
+        String randomPart = UUID.randomUUID().toString().substring(0, 8);
         return threadPart + "-" + randomPart;
     }
 
-    /**
-     * Состояние агрегации по одному jobId.
-     */
     private static final class JobAggregation {
+
         private final String jobId;
         private final Map<Integer, ResultMessage> sections;
         private final Map<String, Integer> globalWordFrequencies;
@@ -250,14 +261,21 @@ public class AggregatorApp {
         private int receivedSections;
         private int totalWordCount;
 
+        private int totalSentimentScore;
+        private int totalPositiveWordCount;
+        private int totalNegativeWordCount;
+
         JobAggregation(String jobId, int totalSections) {
             this.jobId = jobId;
+            this.totalSections = totalSections;
             this.sections = new HashMap<>();
             this.globalWordFrequencies = new HashMap<>();
-            this.receivedSectionIndexes = ConcurrentHashMap.newKeySet();
-            this.totalSections = totalSections;
+            this.receivedSectionIndexes = new HashSet<>();
             this.receivedSections = 0;
             this.totalWordCount = 0;
+            this.totalSentimentScore = 0;
+            this.totalPositiveWordCount = 0;
+            this.totalNegativeWordCount = 0;
         }
 
         String getJobId() {
@@ -266,6 +284,10 @@ public class AggregatorApp {
 
         int getTotalSections() {
             return totalSections;
+        }
+
+        int getReceivedSections() {
+            return receivedSections;
         }
 
         int getTotalWordCount() {
@@ -280,29 +302,58 @@ public class AggregatorApp {
             return globalWordFrequencies;
         }
 
-        boolean hasSection(int sectionIndex) {
-            return receivedSectionIndexes.contains(sectionIndex);
+        int getTotalSentimentScore() {
+            return totalSentimentScore;
+        }
+
+        int getTotalPositiveWordCount() {
+            return totalPositiveWordCount;
+        }
+
+        int getTotalNegativeWordCount() {
+            return totalNegativeWordCount;
         }
 
         boolean isComplete() {
-            return totalSections > 0 && receivedSections >= totalSections;
+            return receivedSections == totalSections;
         }
 
-        void addSection(ResultMessage result) {
+        void addSectionResult(ResultMessage result) {
+            if (result == null) {
+                return;
+            }
+
             int sectionIndex = result.getSectionIndex();
+            if (receivedSectionIndexes.contains(sectionIndex)) {
+                return;
+            }
+
             receivedSectionIndexes.add(sectionIndex);
+            receivedSections++;
+
             sections.put(sectionIndex, result);
 
-            receivedSections += 1;
             totalWordCount += result.getWordCount();
+
+            totalSentimentScore += result.getSentimentScore();
+            totalPositiveWordCount += result.getPositiveWordCount();
+            totalNegativeWordCount += result.getNegativeWordCount();
 
             List<ResultMessage.WordFrequency> topWords = result.getTopWords();
             if (topWords != null) {
                 for (ResultMessage.WordFrequency wf : topWords) {
-                    if (wf.getWord() == null) {
+                    if (wf == null) {
                         continue;
                     }
-                    globalWordFrequencies.merge(wf.getWord(), wf.getCount(), Integer::sum);
+                    String word = wf.getWord();
+                    if (word == null || word.isEmpty()) {
+                        continue;
+                    }
+                    int count = wf.getCount();
+                    if (count <= 0) {
+                        continue;
+                    }
+                    globalWordFrequencies.merge(word, count, Integer::sum);
                 }
             }
         }

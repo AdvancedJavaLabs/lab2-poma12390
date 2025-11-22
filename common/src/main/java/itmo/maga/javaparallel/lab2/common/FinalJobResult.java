@@ -11,9 +11,19 @@ public final class FinalJobResult {
     private List<ResultMessage.WordFrequency> globalTopWords;
     private List<ResultMessage> sections;
 
+    private int totalSentimentScore;
+    private int totalPositiveWordCount;
+    private int totalNegativeWordCount;
+    private double averageSentimentPerSection;
+
+    private String modifiedText;
+
+    private List<String> sortedSentences;
+
     public FinalJobResult() {
         this.globalTopWords = new ArrayList<>();
         this.sections = new ArrayList<>();
+        this.sortedSentences = new ArrayList<>();
     }
 
     public FinalJobResult(
@@ -21,13 +31,24 @@ public final class FinalJobResult {
             int totalSections,
             int totalWordCount,
             List<ResultMessage.WordFrequency> globalTopWords,
-            List<ResultMessage> sections
+            List<ResultMessage> sections,
+            int totalSentimentScore,
+            int totalPositiveWordCount,
+            int totalNegativeWordCount,
+            double averageSentimentPerSection,
+            String modifiedText
     ) {
         this.jobId = jobId;
         this.totalSections = totalSections;
         this.totalWordCount = totalWordCount;
         this.globalTopWords = globalTopWords != null ? new ArrayList<>(globalTopWords) : new ArrayList<>();
         this.sections = sections != null ? new ArrayList<>(sections) : new ArrayList<>();
+        this.totalSentimentScore = totalSentimentScore;
+        this.totalPositiveWordCount = totalPositiveWordCount;
+        this.totalNegativeWordCount = totalNegativeWordCount;
+        this.averageSentimentPerSection = averageSentimentPerSection;
+        this.modifiedText = modifiedText;
+        this.sortedSentences = new ArrayList<>();
     }
 
     public String getJobId() {
@@ -70,6 +91,54 @@ public final class FinalJobResult {
         this.sections = sections != null ? new ArrayList<>(sections) : new ArrayList<>();
     }
 
+    public int getTotalSentimentScore() {
+        return totalSentimentScore;
+    }
+
+    public void setTotalSentimentScore(int totalSentimentScore) {
+        this.totalSentimentScore = totalSentimentScore;
+    }
+
+    public int getTotalPositiveWordCount() {
+        return totalPositiveWordCount;
+    }
+
+    public void setTotalPositiveWordCount(int totalPositiveWordCount) {
+        this.totalPositiveWordCount = totalPositiveWordCount;
+    }
+
+    public int getTotalNegativeWordCount() {
+        return totalNegativeWordCount;
+    }
+
+    public void setTotalNegativeWordCount(int totalNegativeWordCount) {
+        this.totalNegativeWordCount = totalNegativeWordCount;
+    }
+
+    public double getAverageSentimentPerSection() {
+        return averageSentimentPerSection;
+    }
+
+    public void setAverageSentimentPerSection(double averageSentimentPerSection) {
+        this.averageSentimentPerSection = averageSentimentPerSection;
+    }
+
+    public String getModifiedText() {
+        return modifiedText;
+    }
+
+    public void setModifiedText(String modifiedText) {
+        this.modifiedText = modifiedText;
+    }
+
+    public List<String> getSortedSentences() {
+        return sortedSentences;
+    }
+
+    public void setSortedSentences(List<String> sortedSentences) {
+        this.sortedSentences = sortedSentences != null ? new ArrayList<>(sortedSentences) : new ArrayList<>();
+    }
+
     @Override
     public String toString() {
         return "FinalJobResult{" +
@@ -78,6 +147,12 @@ public final class FinalJobResult {
                 ", totalWordCount=" + totalWordCount +
                 ", globalTopWordsSize=" + (globalTopWords != null ? globalTopWords.size() : 0) +
                 ", sectionsCount=" + (sections != null ? sections.size() : 0) +
+                ", totalSentimentScore=" + totalSentimentScore +
+                ", totalPositiveWordCount=" + totalPositiveWordCount +
+                ", totalNegativeWordCount=" + totalNegativeWordCount +
+                ", averageSentimentPerSection=" + averageSentimentPerSection +
+                ", modifiedTextLength=" + (modifiedText != null ? modifiedText.length() : 0) +
+                ", sortedSentencesCount=" + (sortedSentences != null ? sortedSentences.size() : 0) +
                 '}';
     }
 }
