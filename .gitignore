@@ -1,0 +1,23 @@
+# Gradle
+# =========================
+.gradle/
+build/
+**/build/
+
+# не игнорировать Gradle Wrapper JAR
+!gradle/wrapper/gradle-wrapper.jar
+
+# =========================
+# IntelliJ IDEA
+# =========================
+.idea/
+*.iml
+*.iws
+out/
+
+# =========================
+# Результаты работы приложения
+# =========================
+results/
+tmp/
+*.tmp
